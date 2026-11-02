@@ -13,6 +13,9 @@ Recorded here with hardware, settings and wall-clock time as they're run. Nothin
 | Date | Backend | Engine | Mode | Settings | Time | Result |
 |---|---|---|---|---|---|---|
 | 2026-11-02 | User's MacBook Pro (Intel i7-1068NG7, 32 GB, CPU only), ComfyUI v0.7.0 + PyTorch 2.2.2 | LTX-Video 2B distilled 0.9.8 | t2v (direct ComfyUI API, same node graph as the studio) | 320×192, 9 frames @ 24 fps, 8 steps, cfg 1, seed 42 | 78.6 s total, cold model load; sampling 27.8 s (~3 s/step); peak RAM 15.8 GB | ✅ Fox walking through snow between pines, verified by inspecting a frame |
+| 2026-11-02 | Same Mac, through the studio app (start.sh, local backend) | LTX-Video 2B distilled | t2v | "512p" 16:9 → 832×480, 49 frames (2.0 s) @ 24 fps, 8 steps, tracking camera | 1188.6 s (~20 min); ~75–125 s/step, slowed by a game and Chrome using the CPU; ~12–13 GB RAM | ✅ Fox in snow between pines, golden backlight, soft background |
+| 2026-11-02 | Same | LTX-Video 2B distilled | i2v (uploaded frame) | 320p → 544×288, 25 frames (1 s), "gentle wind, subtle motion" | 340.5 s (~5.7 min); peak 18.3 GB RAM | ✅ First frame matches the input; subject stays consistent |
+| 2026-11-02 | Same | Real-ESRGAN x2 | model install via Explore Models | 67 MB | 25 MB/s | ✅ certifi fix verified (was CERTIFICATE_VERIFY_FAILED) |
 
 ### Intel Mac notes learned from that run
 - ComfyUI ≥ 0.8.0 needs PyTorch 2.4 (`torch.library.custom_op`), so Intel Macs are pinned to v0.7.0.

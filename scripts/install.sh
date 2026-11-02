@@ -61,15 +61,15 @@ say "Installing the studio backend"
 for f in /Applications/Python\ 3.1*/Install\ Certificates.command; do [ -f "$f" ] && bash "$f" >/dev/null 2>&1 || true; done
 
 # ---------------------------------------------------------------- interface
-# A pre-built copy ships in frontend/out. Rebuild it if Node 18+ is available.
-[ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1 || true
-if command -v npm >/dev/null 2>&1 && node -e 'process.exit(+process.versions.node.split(".")[0] >= 18 ? 0 : 1)'; then
+# A pre-built copy ships in frontend/out (kept in git, so updates via `git pull` stay clean).
+# Rebuild only when it's missing or you pass --build-ui (needs Node 18+).
+if [ ! -f "$APP/frontend/out/index.html" ] || [[ " $* " == *" --build-ui "* ]]; then
+  [ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1 || true
+  command -v npm >/dev/null 2>&1 || die "Node.js 18+ is needed to build the interface: https://nodejs.org"
   say "Building the interface"
   (cd "$APP/frontend" && npm ci --no-audit --no-fund --loglevel=error && npm run build >/dev/null)
-elif [ -f "$APP/frontend/out/index.html" ]; then
-  echo "  Node not found; using the pre-built interface."
 else
-  die "The interface isn't built and Node.js 18+ isn't installed. Install Node from https://nodejs.org and re-run."
+  echo "  Using the pre-built interface."
 fi
 
 # ---------------------------------------------------------------- local ComfyUI
