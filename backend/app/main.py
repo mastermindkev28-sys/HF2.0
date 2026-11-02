@@ -453,7 +453,7 @@ async def upload_asset(file: UploadFile = File(...)):
     stem = db.new_id()
     dest = await _store_upload(file, ASSETS_DIR, stem)
     kind = "image" if dest.suffix in IMAGE_EXT else "video"
-    info = await media.probe(dest) if media.ffprobe_bin() else {}
+    info = await media.probe(dest)
     if kind == "video":
         try:
             await media.thumbnail(dest, THUMBS_DIR / f"asset_{stem}.jpg")

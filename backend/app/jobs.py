@@ -194,7 +194,7 @@ class JobManager:
             thumb_name = thumb.name
         except media.MediaError:
             thumb_name = None
-        info = await media.probe(video) if media.ffprobe_bin() else {}
+        info = await media.probe(video)
         db.update_generation(gid, output_file=video.name, thumb_file=thumb_name, duration_s=info.get("duration_s"))
 
     async def _generate(self, g: dict[str, Any]) -> None:

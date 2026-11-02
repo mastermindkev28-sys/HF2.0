@@ -1,0 +1,4 @@
+# Intel Mac (PyTorch 2.2.2, the last Intel-Mac build). Verified on the user's MacBook 2026-11-02.
+numpy<2
+transformers==4.51.3
+tokenizers==0.21.4

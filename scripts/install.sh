@@ -36,19 +36,18 @@ if [ ! -x "$RUNTIME/bin/ffmpeg" ] && ! command -v ffmpeg >/dev/null 2>&1; then
   say "Downloading FFmpeg (standalone)"
   TMP="$(mktemp -d)"
   if [ "$OS" = "Darwin" ]; then
-    # evermeet.cx static builds (Intel; they also run on Apple Silicon via Rosetta)
-    curl -fL --retry 3 -o "$TMP/ffmpeg.zip"  "https://evermeet.cx/ffmpeg/getrelease/zip"
-    curl -fL --retry 3 -o "$TMP/ffprobe.zip" "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip"
-    (cd "$TMP" && unzip -oq ffmpeg.zip && unzip -oq ffprobe.zip)
-    mv "$TMP/ffmpeg" "$TMP/ffprobe" "$RUNTIME/bin/"
-    xattr -d com.apple.quarantine "$RUNTIME/bin/ffmpeg" "$RUNTIME/bin/ffprobe" 2>/dev/null || true
+    # FFmpeg 7.x static build shipped inside the imageio-ffmpeg wheel on PyPI (no Homebrew needed).
+    "$PY" -m pip download -q --no-deps --only-binary=:all: -d "$TMP" "imageio-ffmpeg==0.7.0"
+    (cd "$TMP" && unzip -oq imageio_ffmpeg-*.whl 'imageio_ffmpeg/binaries/*')
+    cp "$TMP"/imageio_ffmpeg/binaries/ffmpeg-* "$RUNTIME/bin/ffmpeg"
+    xattr -d com.apple.quarantine "$RUNTIME/bin/ffmpeg" 2>/dev/null || true
   else
     case "$ARCH" in x86_64) FA=amd64;; aarch64|arm64) FA=arm64;; *) die "No static FFmpeg for $ARCH; install ffmpeg with your package manager.";; esac
     curl -fL --retry 3 -o "$TMP/ff.tar.xz" "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-$FA-static.tar.xz"
     tar -xJf "$TMP/ff.tar.xz" -C "$TMP"
     mv "$TMP"/ffmpeg-*-static/ffmpeg "$TMP"/ffmpeg-*-static/ffprobe "$RUNTIME/bin/"
   fi
-  chmod +x "$RUNTIME/bin/ffmpeg" "$RUNTIME/bin/ffprobe"
+  chmod +x "$RUNTIME/bin/ffmpeg" "$RUNTIME/bin/ffprobe" 2>/dev/null || chmod +x "$RUNTIME/bin/ffmpeg"
   rm -rf "$TMP"
 fi
 "${RUNTIME}/bin/ffmpeg" -version 2>/dev/null | head -1 || ffmpeg -version | head -1
@@ -76,7 +75,12 @@ if [ "$NO_COMFY" = "0" ]; then
   COMFY="$RUNTIME/ComfyUI"
   if [ ! -d "$COMFY" ]; then
     say "Installing ComfyUI (local inference engine)"
-    git clone --depth 1 https://github.com/comfyanonymous/ComfyUI "$COMFY"
+    if [ "$OS" = "Darwin" ] && [ "$ARCH" = "x86_64" ]; then
+      # Last ComfyUI release that still runs on PyTorch 2.2 (0.8.0+ needs torch.library.custom_op, PyTorch 2.4+).
+      git clone --depth 1 --branch v0.7.0 https://github.com/comfyanonymous/ComfyUI "$COMFY"
+    else
+      git clone --depth 1 https://github.com/comfyanonymous/ComfyUI "$COMFY"
+    fi
   fi
   if [ ! -x "$RUNTIME/venv/bin/python" ]; then "$PY" -m venv "$RUNTIME/venv"; fi
   VPY="$RUNTIME/venv/bin/python"
@@ -95,12 +99,18 @@ if [ "$NO_COMFY" = "0" ]; then
     fi
   fi
   # ComfyUI requirements, without letting them replace the torch we just chose
-  grep -viE '^(torch|torchvision|torchaudio)([<>=~ ]|$)' "$COMFY/requirements.txt" > "$RUNTIME/comfy-req.txt"
+  SKIP='torch|torchvision|torchaudio'
+  # Intel Mac: these optional packages have no Intel-Mac builds or need a newer PyTorch
+  if [ "$OS" = "Darwin" ] && [ "$ARCH" = "x86_64" ]; then SKIP="$SKIP|comfy-angle|comfy-kitchen|comfy-aimdo"; fi
+  grep -viE "^($SKIP)([<>=~ \[]|\$)" "$COMFY/requirements.txt" > "$RUNTIME/comfy-req.txt"
   [ -f "$APP/scripts/comfy-constraints-$OS-$ARCH.txt" ] && CONS=(-c "$APP/scripts/comfy-constraints-$OS-$ARCH.txt") || CONS=()
   "$VPY" -m pip install -q -r "$RUNTIME/comfy-req.txt" "${CONS[@]}"
   # bridge node (model manager + hardware info)
   rm -rf "$COMFY/custom_nodes/higgs_bridge"
   cp -R "$APP/custom_nodes/higgs_bridge" "$COMFY/custom_nodes/higgs_bridge"
+  if [ "$OS" = "Darwin" ] && [ "$ARCH" = "x86_64" ]; then
+    cp "$APP/custom_nodes/torch22_compat.py" "$COMFY/custom_nodes/torch22_compat.py"
+  fi
 
   if [ "$WITH_LTX" = "1" ]; then
     say "Downloading LTX-Video 2B distilled + T5 text encoder (~11.5 GB)"

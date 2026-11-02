@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -55,10 +56,34 @@ def _need_ffmpeg() -> str:
     return b
 
 
+async def _probe_with_ffmpeg(path: Path) -> dict[str, Any]:
+    """Fallback when only ffmpeg is available (e.g. the imageio-ffmpeg build has no ffprobe)."""
+    ff = ffmpeg_bin()
+    if not ff:
+        return {}
+    proc = await asyncio.create_subprocess_exec(ff, "-hide_banner", "-i", str(path), stdout=asyncio.subprocess.PIPE,
+                                                stderr=asyncio.subprocess.PIPE)
+    _, err = await proc.communicate()
+    text = err.decode(errors="ignore")
+    out: dict[str, Any] = {"width": None, "height": None, "fps": None, "duration_s": None, "frames": None}
+    m = re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", text)
+    if m:
+        out["duration_s"] = int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3])
+    m = re.search(r"Video: .*?(\d{2,5})x(\d{2,5})", text)
+    if m:
+        out["width"], out["height"] = int(m[1]), int(m[2])
+    m = re.search(r"(\d+(?:\.\d+)?) fps", text)
+    if m:
+        out["fps"] = float(m[1])
+    if path.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".bmp"):
+        out["duration_s"] = None
+    return out
+
+
 async def probe(path: Path) -> dict[str, Any]:
     fp = ffprobe_bin()
     if not fp:
-        return {}
+        return await _probe_with_ffmpeg(path)
     out = await _run(fp, "-v", "error", "-print_format", "json", "-show_streams", "-show_format", str(path))
     data = json.loads(out)
     v = next((s for s in data.get("streams", []) if s.get("codec_type") == "video"), {})
