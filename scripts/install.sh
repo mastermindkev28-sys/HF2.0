@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# HIGGS Studio installer (macOS / Linux). Safe to re-run: it only adds what's missing.
+#
+#   bash scripts/install.sh              # studio + ffmpeg + local ComfyUI (CPU/GPU auto)
+#   bash scripts/install.sh --with-ltx   # also download LTX-Video 2B (~11.5 GB) for local generation
+#   bash scripts/install.sh --no-comfy   # studio only (generate on Kaggle / another GPU computer)
+#
+# Layout:  <parent>/app      <- this repository
+#          <parent>/runtime  <- ffmpeg, ComfyUI, its Python env and models (override with HIGGS_RUNTIME_DIR)
+set -euo pipefail
+
+APP="$(cd "$(dirname "$0")/.." && pwd)"
+RUNTIME="${HIGGS_RUNTIME_DIR:-$(dirname "$APP")/runtime}"
+WITH_LTX=0; NO_COMFY=0
+for a in "$@"; do case "$a" in --with-ltx) WITH_LTX=1;; --no-comfy) NO_COMFY=1;; esac; done
+
+OS="$(uname -s)"; ARCH="$(uname -m)"
+say() { printf "\n\033[1;38;5;191m▸ %s\033[0m\n" "$*"; }
+die() { printf "\n\033[1;31m✗ %s\033[0m\n" "$*"; exit 1; }
+
+mkdir -p "$RUNTIME/bin"
+say "HIGGS Studio installer · $OS $ARCH"
+echo "  app:     $APP"
+echo "  runtime: $RUNTIME"
+
+# ---------------------------------------------------------------- python
+PY=""
+for c in python3.12 python3.11 python3.13 python3.10 python3; do
+  if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; sys.exit(0 if (3,10)<=sys.version_info[:2]<=(3,13) else 1)'; then PY="$(command -v "$c")"; break; fi
+done
+[ -n "$PY" ] || die "Python 3.10–3.13 is required. Install it from https://www.python.org/downloads/ and run this again."
+echo "  python:  $PY ($("$PY" --version))"
+
+# ---------------------------------------------------------------- ffmpeg (standalone, no Homebrew)
+if [ ! -x "$RUNTIME/bin/ffmpeg" ] && ! command -v ffmpeg >/dev/null 2>&1; then
+  say "Downloading FFmpeg (standalone)"
+  TMP="$(mktemp -d)"
+  if [ "$OS" = "Darwin" ]; then
+    # evermeet.cx static builds (Intel; they also run on Apple Silicon via Rosetta)
+    curl -fL --retry 3 -o "$TMP/ffmpeg.zip"  "https://evermeet.cx/ffmpeg/getrelease/zip"
+    curl -fL --retry 3 -o "$TMP/ffprobe.zip" "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip"
+    (cd "$TMP" && unzip -oq ffmpeg.zip && unzip -oq ffprobe.zip)
+    mv "$TMP/ffmpeg" "$TMP/ffprobe" "$RUNTIME/bin/"
+    xattr -d com.apple.quarantine "$RUNTIME/bin/ffmpeg" "$RUNTIME/bin/ffprobe" 2>/dev/null || true
+  else
+    case "$ARCH" in x86_64) FA=amd64;; aarch64|arm64) FA=arm64;; *) die "No static FFmpeg for $ARCH; install ffmpeg with your package manager.";; esac
+    curl -fL --retry 3 -o "$TMP/ff.tar.xz" "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-$FA-static.tar.xz"
+    tar -xJf "$TMP/ff.tar.xz" -C "$TMP"
+    mv "$TMP"/ffmpeg-*-static/ffmpeg "$TMP"/ffmpeg-*-static/ffprobe "$RUNTIME/bin/"
+  fi
+  chmod +x "$RUNTIME/bin/ffmpeg" "$RUNTIME/bin/ffprobe"
+  rm -rf "$TMP"
+fi
+"${RUNTIME}/bin/ffmpeg" -version 2>/dev/null | head -1 || ffmpeg -version | head -1
+
+# ---------------------------------------------------------------- studio backend
+say "Installing the studio backend"
+[ -d "$APP/backend/.venv" ] || "$PY" -m venv "$APP/backend/.venv"
+"$APP/backend/.venv/bin/python" -m pip install -q --upgrade pip
+"$APP/backend/.venv/bin/python" -m pip install -q -r "$APP/backend/requirements.txt"
+
+# ---------------------------------------------------------------- interface
+# A pre-built copy ships in frontend/out. Rebuild it if Node 18+ is available.
+[ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1 || true
+if command -v npm >/dev/null 2>&1 && node -e 'process.exit(+process.versions.node.split(".")[0] >= 18 ? 0 : 1)'; then
+  say "Building the interface"
+  (cd "$APP/frontend" && npm ci --no-audit --no-fund --loglevel=error && npm run build >/dev/null)
+elif [ -f "$APP/frontend/out/index.html" ]; then
+  echo "  Node not found; using the pre-built interface."
+else
+  die "The interface isn't built and Node.js 18+ isn't installed. Install Node from https://nodejs.org and re-run."
+fi
+
+# ---------------------------------------------------------------- local ComfyUI
+if [ "$NO_COMFY" = "0" ]; then
+  COMFY="$RUNTIME/ComfyUI"
+  if [ ! -d "$COMFY" ]; then
+    say "Installing ComfyUI (local inference engine)"
+    git clone --depth 1 https://github.com/comfyanonymous/ComfyUI "$COMFY"
+  fi
+  if [ ! -x "$RUNTIME/venv/bin/python" ]; then "$PY" -m venv "$RUNTIME/venv"; fi
+  VPY="$RUNTIME/venv/bin/python"
+  "$VPY" -m pip install -q --upgrade pip
+  if ! "$VPY" -c "import torch" 2>/dev/null; then
+    say "Installing PyTorch"
+    if [ "$OS" = "Darwin" ] && [ "$ARCH" = "x86_64" ]; then
+      # PyTorch stopped publishing Intel-Mac builds after 2.2.2 (CPU only on these Macs).
+      "$VPY" -m pip install -q "torch==2.2.2" "torchvision==0.17.2" "torchaudio==2.2.2" "numpy<2"
+    elif command -v nvidia-smi >/dev/null 2>&1; then
+      "$VPY" -m pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+    elif [ "$OS" = "Darwin" ]; then
+      "$VPY" -m pip install -q torch torchvision torchaudio            # Apple Silicon: Metal (MPS)
+    else
+      "$VPY" -m pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+    fi
+  fi
+  # ComfyUI requirements, without letting them replace the torch we just chose
+  grep -viE '^(torch|torchvision|torchaudio)([<>=~ ]|$)' "$COMFY/requirements.txt" > "$RUNTIME/comfy-req.txt"
+  [ -f "$APP/scripts/comfy-constraints-$OS-$ARCH.txt" ] && CONS=(-c "$APP/scripts/comfy-constraints-$OS-$ARCH.txt") || CONS=()
+  "$VPY" -m pip install -q -r "$RUNTIME/comfy-req.txt" "${CONS[@]}"
+  # bridge node (model manager + hardware info)
+  rm -rf "$COMFY/custom_nodes/higgs_bridge"
+  cp -R "$APP/custom_nodes/higgs_bridge" "$COMFY/custom_nodes/higgs_bridge"
+
+  if [ "$WITH_LTX" = "1" ]; then
+    say "Downloading LTX-Video 2B distilled + T5 text encoder (~11.5 GB)"
+    mkdir -p "$COMFY/models/checkpoints" "$COMFY/models/text_encoders"
+    dl() { if [ ! -f "$2" ]; then curl -fL --retry 5 -C - -o "$2.part" "$1" && mv "$2.part" "$2"; fi; }
+    dl "https://huggingface.co/Lightricks/LTX-Video/resolve/main/ltxv-2b-0.9.8-distilled.safetensors" "$COMFY/models/checkpoints/ltxv-2b-0.9.8-distilled.safetensors"
+    dl "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn_scaled.safetensors" "$COMFY/models/text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors"
+  fi
+fi
+
+say "Done. Start the studio with:  bash \"$APP/scripts/start.sh\""
+[ "$OS" = "Darwin" ] && echo "  or double-click \"Start HIGGS Studio.command\" in the app folder."
