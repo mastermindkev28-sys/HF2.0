@@ -175,3 +175,27 @@ def _wait(c, gid, timeout=60):
             return g
         time.sleep(0.2)
     raise TimeoutError(gid)
+
+
+def test_long_video(fake_comfy):
+    url, fc = fake_comfy
+    from app.main import app
+    with TestClient(app) as c:
+        s = c.get("/api/settings").json()
+        s["backends"][0]["url"] = url
+        s["active_backend"] = "local"
+        c.put("/api/settings", json=s)
+        n_before = len(fc.SUBMITTED)
+        r = c.post("/api/generate/long", json={"engine": "wan22_ti2v_5b", "aspect": "9:16", "shots": [
+            {"prompt": "she picks up the serum bottle", "duration_s": 5, "camera": ["dolly_in"]},
+            {"prompt": "she applies a drop to her cheek", "duration_s": 5},
+            {"prompt": "close-up of the bottle on the counter", "duration_s": 5, "camera": ["orbit"]}]})
+        assert r.status_code == 200, r.text
+        g = _wait(c, r.json()["id"], timeout=90)
+        assert g["status"] == "done", g
+        subs = fc.SUBMITTED[n_before:]
+        assert len(subs) == 3
+        kinds = [any(n["class_type"] == "LoadImage" for n in wf.values()) for wf in subs]
+        assert kinds == [False, True, True]  # shot 1 from text, later shots continue from the last frame
+        assert 2.5 < g["duration_s"] < 3.5  # three 1 s test clips joined
+        assert c.post("/api/generate/long", json={"shots": [{"prompt": "x", "duration_s": 5}] * 13}).status_code == 400

@@ -93,6 +93,11 @@ Hugging Face directly onto that backend; **Remove** deletes them. Status shows R
   (similar, not identical). There's no identity adapter for these models, so none is claimed.
 - **Video to Video** re-renders your clip through the model with partial denoising ("strength").
   Lower strength keeps more of the original composition.
+- **Long video** (Create → Long video): 15–60 s videos built from shots of up to 5 s each (the model's
+  limit). Shot 1 starts from your text, image or character; each next shot continues from the previous
+  shot's last frame with image-to-video; all shots are joined, then optionally finished in 1080p. Each shot
+  can have its own prompt and camera move, so it doubles as a simple storyboard. Expect gradual drift in
+  fine detail over many shots. On the Kaggle T4 a 30 s video means six Wan generations back to back.
 - **Extend** takes the last frame, generates an image-to-video continuation, and joins the two clips.
 - **Finish in 1080p** (Create page) and **Enhance → AI upscale to 1080p**: the model generates at its
   native resolution (Wan 2.2: 720p), then Real-ESRGAN ×2 on the backend upscales it and FFmpeg fits it to

@@ -125,6 +125,8 @@ class JobManager:
             await self._generate(g)
         elif mode == "extend":
             await self._extend(g)
+        elif mode == "long":
+            await self._long(g)
         elif mode in ("interpolate", "upscale_basic", "stitch"):
             await self._ffmpeg_tool(g)
         elif mode == "upscale_ai":
@@ -143,7 +145,8 @@ class JobManager:
         return resolved  # type: ignore[return-value]
 
     async def _run_engine(self, g: dict[str, Any], mode: str, image_path: Path | None,
-                          video_path: Path | None, out_name: str) -> Path:
+                          video_path: Path | None, out_name: str, prompt: str | None = None,
+                          duration_s: float | None = None, seed: int | None = None, cb=None) -> Path:
         p = g["params"]
         engine = get_engine(g["engine"])
         if engine.catalog_only:
@@ -151,7 +154,7 @@ class JobManager:
         if mode not in engine.modes:
             raise ComfyError(f"{engine.name} does not support {mode}.")
         client = client_for(g["backend_id"])
-        cb = self._progress_cb(g["id"])
+        cb = cb or self._progress_cb(g["id"])
         cb(0.0, "Checking models on backend")
         files = await self._check_files(client, engine)
         image_name = video_name = None
@@ -162,11 +165,11 @@ class JobManager:
             cb(0.0, "Uploading video")
             video_name = await client.upload_file(video_path, f"higgs_{g['id']}{video_path.suffix}")
         req = GenRequest(
-            mode=mode, prompt=g["final_prompt"] or g["prompt"], negative=g.get("negative_prompt") or "",
+            mode=mode, prompt=prompt or g["final_prompt"] or g["prompt"], negative=g.get("negative_prompt") or "",
             aspect=p.get("aspect", "16:9"), resolution=p.get("resolution") or engine.defaults["resolution"],
-            duration_s=float(p.get("duration_s", engine.defaults["duration_s"])), fps=int(p.get("fps", engine.defaults["fps"])),
+            duration_s=float(duration_s or p.get("duration_s", engine.defaults["duration_s"])), fps=int(p.get("fps", engine.defaults["fps"])),
             steps=int(p.get("steps", engine.defaults["steps"])), cfg=float(p.get("cfg", engine.defaults["cfg"])),
-            seed=int(p.get("seed", 0)), image=image_name, video=video_name,
+            seed=int(p.get("seed", 0) if seed is None else seed), image=image_name, video=video_name,
             denoise=float(p.get("denoise", engine.defaults.get("denoise", 0.6))), extra=p.get("extra", {}),
         )
         workflow = engine.build(req, files)
@@ -201,10 +204,7 @@ class JobManager:
         p = g["params"]
         image = resolve_input_path(p["image"]) if g["mode"] == "i2v" else None
         video = resolve_input_path(p["video"]) if g["mode"] == "v2v" else None
-        if p.get("finish_1080p"):  # check before spending GPU time on the generation
-            installed = installed_from_object_info(await client_for(g["backend_id"]).object_info())
-            if not any(n in installed.get("upscale_models", []) for n in [UPSCALER.filename, *UPSCALER.alternatives]):
-                raise ComfyError("“Finish in 1080p” needs the Real-ESRGAN upscaler on this backend. Install it from Explore Models.")
+        await self._require_upscaler_if_1080(g)
         out = await self._run_engine(g, g["mode"], image, video, g["id"])
         if p.get("finish_1080p"):
             out = await self._to_1080p(g, out)
@@ -236,6 +236,43 @@ class JobManager:
         final = OUTPUTS_DIR / f"{g['id']}.mp4"
         await media.concat([src, cont], final)
         frame.unlink(missing_ok=True)
+        await self._finish(g["id"], final)
+
+    async def _require_upscaler_if_1080(self, g: dict[str, Any]) -> None:
+        if not g["params"].get("finish_1080p"):  # checked before spending GPU time on the generation
+            return
+        installed = installed_from_object_info(await client_for(g["backend_id"]).object_info())
+        if not any(n in installed.get("upscale_models", []) for n in [UPSCALER.filename, *UPSCALER.alternatives]):
+            raise ComfyError("“Finish in 1080p” needs the Real-ESRGAN upscaler on this backend. Install it from Explore Models.")
+
+    async def _long(self, g: dict[str, Any]) -> None:
+        """Long video: shot 1 from text (or an image), every next shot continues from the previous shot's
+        last frame via image-to-video, then all shots are joined. Each shot keeps the model's own length limit."""
+        p = g["params"]
+        await self._require_upscaler_if_1080(g)
+        shots = p["shots"]
+        n = len(shots)
+        overall = self._progress_cb(g["id"])
+        parts: list[Path] = []
+        prev_frame: Path | None = resolve_input_path(p["image"]) if p.get("image") else None
+        for i, shot in enumerate(shots):
+            def cb(v, text, i=i):
+                overall(None if v is None else min(0.97, (i + v) / n * 0.95), f"Shot {i + 1}/{n} · {text}")
+            mode = "i2v" if prev_frame is not None else "t2v"
+            out = await self._run_engine(g, mode, prev_frame, None, f"{g['id']}.shot{i + 1}",
+                                         prompt=shot["final_prompt"], duration_s=float(shot["duration_s"]),
+                                         seed=int(p["seed"]) + i, cb=cb)
+            parts.append(out)
+            if i < n - 1:
+                prev_frame = OUTPUTS_DIR / f"{g['id']}.shot{i + 1}.last.png"
+                await media.last_frame(out, prev_frame)
+        overall(0.96, "Joining shots")
+        final = OUTPUTS_DIR / f"{g['id']}.mp4"
+        await media.concat(parts, final, drop_first_frame_of_rest=True)
+        for i in range(n):
+            (OUTPUTS_DIR / f"{g['id']}.shot{i + 1}.last.png").unlink(missing_ok=True)
+        if p.get("finish_1080p"):
+            final = await self._to_1080p(g, final)
         await self._finish(g["id"], final)
 
     async def _ffmpeg_tool(self, g: dict[str, Any]) -> None:
@@ -311,6 +348,8 @@ def _humanize(e: Exception) -> str:
 
 
 def delete_generation_files(g: dict[str, Any]) -> None:
+    for extra in OUTPUTS_DIR.glob(f"{g['id']}.shot*"):
+        extra.unlink(missing_ok=True)
     for name in (g.get("output_file"), f"{g['id']}.workflow.json", f"{g['id']}.mp4", f"{g['id']}.1080p.mp4", f"{g['id']}.cont.mp4", f"{g['id']}.cont.workflow.json"):
         if name:
             (OUTPUTS_DIR / name).unlink(missing_ok=True)

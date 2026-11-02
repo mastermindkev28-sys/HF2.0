@@ -16,7 +16,7 @@ export default function Preview({ gen, onNew, onUpdate, aspect = "16:9" }: {
     try { const r = await fn(); if (msg) toast(msg); return r; } catch (e: any) { toast(e.message, "err"); } finally { setBusy(null); }
   };
 
-  const isGen = gen && ["t2v", "i2v", "v2v", "extend"].includes(gen.mode);
+  const isGen = gen && ["t2v", "i2v", "v2v", "extend", "long"].includes(gen.mode);
   return (
     <div className="flex flex-col gap-3">
       <div className="panel relative grid place-items-center overflow-hidden bg-ink-950" style={{ aspectRatio: ar, maxHeight: "62vh" }}>
@@ -61,7 +61,7 @@ export default function Preview({ gen, onNew, onUpdate, aspect = "16:9" }: {
           {gen.status === "done" && gen.output_file && (
             <div className="flex flex-wrap gap-1">
               <a className="btn-ghost" href={fileUrl("outputs", gen.output_file)} download={`higgs-${gen.id}.mp4`}><Download size={13} /> Download</a>
-              {isGen && gen.mode !== "extend" && <>
+              {isGen && !["extend", "long"].includes(gen.mode) && <>
                 <button className="btn-ghost" disabled={!!busy} onClick={() => act("regen", () => api(`/api/generations/${gen.id}/regenerate`, { method: "POST", json: { variation: false } }).then(onNew), "Regenerating with the same seed")}><RefreshCw size={13} /> Regenerate</button>
                 <button className="btn-ghost" disabled={!!busy} onClick={() => act("var", () => api(`/api/generations/${gen.id}/regenerate`, { method: "POST", json: { variation: true } }).then(onNew), "Variation queued")}><Shuffle size={13} /> Variation</button>
               </>}

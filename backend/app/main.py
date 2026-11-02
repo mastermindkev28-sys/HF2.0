@@ -308,6 +308,76 @@ async def generate(body: GenerateIn):
     return g
 
 
+class ShotIn(BaseModel):
+    prompt: str
+    duration_s: float = 5
+    camera: list[str] = []
+
+
+class LongIn(BaseModel):
+    engine: str = "wan22_ti2v_5b"
+    backend_id: str | None = None
+    shots: list[ShotIn]
+    negative: str | None = None
+    aspect: str = "9:16"
+    resolution: str | None = None
+    fps: int | None = None
+    steps: int | None = None
+    cfg: float | None = None
+    seed: int = -1
+    camera_intensity: int = 3
+    image: str | None = None
+    character_id: str | None = None
+    finish_1080p: bool = False
+
+
+MAX_LONG_S = 60
+
+
+@app.post("/api/generate/long")
+async def generate_long(body: LongIn):
+    """15-60 s videos: shots are generated one after another, each continuing from the last frame of the previous."""
+    engine = get_engine(body.engine)
+    if engine.catalog_only or "i2v" not in engine.modes:
+        raise HTTPException(400, f"{engine.name} can't make long videos (needs image-to-video).")
+    shots = [s for s in body.shots if s.prompt.strip()]
+    if not shots:
+        raise HTTPException(400, "Add at least one shot with a prompt.")
+    d = engine.defaults
+    fps = body.fps or d["fps"]
+    max_shot = engine.max_frames / fps
+    for s in shots:
+        s.duration_s = max(1.0, min(float(s.duration_s), max_shot))
+    total = sum(s.duration_s for s in shots)
+    if total > MAX_LONG_S:
+        raise HTTPException(400, f"Total length is {total:.0f}s; the limit is {MAX_LONG_S}s.")
+    character_desc, image = "", body.image
+    if body.character_id:
+        ch = db.get_character(body.character_id)
+        if not ch:
+            raise HTTPException(404, "Character not found.")
+        character_desc = ch.get("description") or ""
+        if not image and ch["images"]:
+            image = f"character:{ch['id']}/{ch['images'][0]}"
+    seed = body.seed if body.seed >= 0 else random.randint(0, 2**31 - 1000)
+    shot_params = [{"prompt": s.prompt, "duration_s": s.duration_s, "camera": s.camera,
+                    "final_prompt": build_prompt(s.prompt, s.camera, body.camera_intensity, character_desc=character_desc)}
+                   for s in shots]
+    resolution = body.resolution or d["resolution"]
+    w, h = engine.dims(body.aspect, resolution)
+    params = {"aspect": body.aspect, "resolution": resolution, "fps": fps, "steps": body.steps or d["steps"],
+              "cfg": body.cfg if body.cfg is not None else d["cfg"], "seed": seed, "shots": shot_params,
+              "camera_intensity": body.camera_intensity, "image": image, "finish_1080p": body.finish_1080p,
+              "width": w, "height": h, "duration_s": total, "extra": {}}
+    summary = " → ".join(s.prompt.strip() for s in shots)
+    g = db.create_generation(mode="long", engine=engine.id, backend_id=body.backend_id or load_settings()["active_backend"],
+                             prompt=summary, final_prompt=" | ".join(sp["final_prompt"] for sp in shot_params),
+                             negative_prompt=body.negative if body.negative is not None else d.get("negative", ""),
+                             params=params, character_id=body.character_id)
+    await jobs.enqueue(g["id"])
+    return g
+
+
 @app.get("/api/generations")
 async def generations(limit: int = 200):
     return {"generations": db.list_generations(limit)}

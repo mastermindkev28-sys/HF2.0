@@ -61,7 +61,7 @@ export async function uploadAsset(file: File): Promise<Asset> {
 }
 
 export const MODE_LABEL: Record<string, string> = {
-  t2v: "Text to Video", i2v: "Image to Video", v2v: "Video to Video", extend: "Extension",
+  t2v: "Text to Video", i2v: "Image to Video", v2v: "Video to Video", extend: "Extension", long: "Long video",
   interpolate: "Interpolation", upscale_basic: "Upscale", upscale_ai: "AI Upscale", stitch: "Stitch",
 };
 

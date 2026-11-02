@@ -1,17 +1,20 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Wand2, ChevronDown, Dice5, Camera, Info, Type, ImageIcon, Clapperboard, AlertTriangle } from "lucide-react";
+import { Wand2, ChevronDown, Dice5, Camera, Info, Type, ImageIcon, Clapperboard, AlertTriangle, Film, Plus, X } from "lucide-react";
 import { api, Character, EngineInfo, fileUrl, Generation, Mode } from "@/lib/api";
 import { useBackendStatus, useEngines, useSettings } from "@/lib/hooks";
 import MediaPicker, { PickedMedia } from "@/components/MediaPicker";
 import Preview from "@/components/Preview";
 import { useToast } from "@/components/Toast";
 
-const MODES: { id: Mode; label: string; icon: any }[] = [
+type UIMode = Mode | "long";
+interface Shot { prompt: string; duration_s: number; camera: string }
+const MODES: { id: UIMode; label: string; icon: any }[] = [
   { id: "t2v", label: "Text to Video", icon: Type },
   { id: "i2v", label: "Image to Video", icon: ImageIcon },
   { id: "v2v", label: "Video to Video", icon: Clapperboard },
+  { id: "long", label: "Long video", icon: Film },
 ];
 const ASPECTS = ["16:9", "9:16", "1:1", "4:3"];
 
@@ -23,7 +26,10 @@ export default function CreatePage() {
   useEffect(() => { if (settings && !backendId) setBackendId(settings.active_backend); }, [settings, backendId]);
   const { status } = useBackendStatus(backendId, 30000);
 
-  const [mode, setMode] = useState<Mode>("t2v");
+  const [mode, setMode] = useState<UIMode>("t2v");
+  const [shots, setShots] = useState<Shot[]>([
+    { prompt: "", duration_s: 5, camera: "" }, { prompt: "", duration_s: 5, camera: "" }, { prompt: "", duration_s: 5, camera: "" },
+  ]);
   const [engineId, setEngineId] = useState("wan22_ti2v_5b");
   const [prompt, setPrompt] = useState("");
   const [negative, setNegative] = useState<string | null>(null);
@@ -53,7 +59,7 @@ export default function CreatePage() {
 
   const engines = useMemo(() => (meta?.engines ?? []).filter((e) => !e.catalog_only), [meta]);
   const engine: EngineInfo | undefined = engines.find((e) => e.id === engineId);
-  const usable = engines.filter((e) => e.modes.includes(mode));
+  const usable = engines.filter((e) => e.modes.includes(mode === "long" ? "i2v" : mode));
 
   // apply engine defaults when the engine changes
   const applyDefaults = useCallback((e: EngineInfo) => {
@@ -65,7 +71,7 @@ export default function CreatePage() {
     setNegative(null);
   }, []);
   useEffect(() => { if (engine) applyDefaults(engine); }, [engine?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (engine && !engine.modes.includes(mode) && usable[0]) setEngineId(usable[0].id); }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (engine && !engine.modes.includes(mode === "long" ? "i2v" : mode) && usable[0]) setEngineId(usable[0].id); }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadRecent = useCallback(() => api<{ generations: Generation[] }>("/api/generations?limit=12").then((r) => setRecent(r.generations)).catch(() => {}), []);
   useEffect(() => { loadRecent(); api<{ characters: Character[] }>("/api/characters").then((r) => setCharacters(r.characters)).catch(() => {}); }, [loadRecent]);
@@ -132,6 +138,19 @@ export default function CreatePage() {
   const generate = async () => {
     setSubmitting(true);
     try {
+      if (mode === "long") {
+        const g = await api<Generation>("/api/generate/long", {
+          method: "POST",
+          json: {
+            engine: engineId, backend_id: backendId, negative: negative ?? undefined, aspect, resolution, fps, steps, cfg, seed,
+            camera_intensity: camIntensity, image: image?.ref, character_id: characterId || undefined, finish_1080p: finish1080,
+            shots: shots.filter((x) => x.prompt.trim()).map((x) => ({ prompt: x.prompt, duration_s: x.duration_s, camera: x.camera ? [x.camera] : [] })),
+          },
+        });
+        setCurrent(g);
+        loadRecent();
+        return;
+      }
       const g = await api<Generation>("/api/generate", {
         method: "POST",
         json: {
@@ -147,13 +166,14 @@ export default function CreatePage() {
     } catch (e: any) { toast(e.message, "err"); } finally { setSubmitting(false); }
   };
 
-  const canGenerate = !!engine && !submitting && (mode !== "t2v" || prompt.trim()) && (mode !== "i2v" || image || character?.images.length) && (mode !== "v2v" || video);
+  const totalLong = shots.filter((x) => x.prompt.trim()).reduce((a, x) => a + x.duration_s, 0);
+  const canGenerate = !!engine && !submitting && (mode !== "long" || (totalLong > 0 && totalLong <= 60)) && (mode !== "t2v" || prompt.trim()) && (mode !== "i2v" || image || character?.images.length) && (mode !== "v2v" || video);
 
   return (
     <div className="grid min-h-screen grid-cols-1 xl:grid-cols-[440px_1fr]">
       {/* ---------------- controls ---------------- */}
       <section className="flex flex-col gap-5 overflow-y-auto border-r border-white/[0.06] bg-ink-950 p-5 xl:h-screen">
-        <div className="grid grid-cols-3 gap-1 rounded-xl border border-white/[0.06] bg-ink-900 p-1">
+        <div className="grid grid-cols-2 gap-1 rounded-xl border border-white/[0.06] bg-ink-900 p-1">
           {MODES.map(({ id, label, icon: Icon }) => (
             <button key={id} onClick={() => setMode(id)}
               className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs transition ${mode === id ? "bg-ink-700 text-fog-100" : "text-fog-500 hover:text-fog-200"}`}>
@@ -167,19 +187,51 @@ export default function CreatePage() {
             <MediaPicker kind="image" value={image} onChange={setImage} />
           </Field>
         )}
+        {mode === "long" && (
+          <>
+            <Field label="Starting image (optional)" hint="Leave empty to start from text. With an image (or a character), shot 1 starts from it.">
+              <MediaPicker kind="image" value={image} onChange={setImage} />
+            </Field>
+            <Field label={`Shots · ${totalLong.toFixed(0)}s total`} hint={`Each shot is up to ${Math.floor((engine?.max_frames ?? 121) / fps)}s (the model's limit). Every shot continues from the last frame of the one before, then they're joined into one video. Long chains can slowly drift in detail.`}>
+              <div className="flex flex-col gap-2">
+                {shots.map((sh, i) => (
+                  <div key={i} className="rounded-xl border border-white/[0.07] bg-ink-900 p-3">
+                    <div className="mb-2 flex items-center justify-between text-[11px] text-fog-500">
+                      <span>Shot {i + 1}</span>
+                      {shots.length > 1 && <button className="btn-ghost -mr-2 py-0.5" onClick={() => setShots(shots.filter((_, j) => j !== i))}><X size={12} /></button>}
+                    </div>
+                    <textarea className="input min-h-[64px] text-sm" value={sh.prompt} placeholder={i === 0 ? "A woman in a cream sweater picks up a glass serum bottle in a sunlit bathroom" : "What happens next…"}
+                      onChange={(e) => setShots(shots.map((x, j) => (j === i ? { ...x, prompt: e.target.value } : x)))} />
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <select className="input py-1.5 text-xs" value={sh.camera} onChange={(e) => setShots(shots.map((x, j) => (j === i ? { ...x, camera: e.target.value } : x)))}>
+                        <option value="">No camera move</option>
+                        {(meta?.camera_moves ?? []).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                      </select>
+                      <select className="input py-1.5 text-xs" value={sh.duration_s} onChange={(e) => setShots(shots.map((x, j) => (j === i ? { ...x, duration_s: Number(e.target.value) } : x)))}>
+                        {Array.from({ length: Math.max(1, Math.floor((engine?.max_frames ?? 121) / fps)) }, (_, k) => k + 1).map((d) => <option key={d} value={d}>{d}s</option>)}
+                      </select>
+                    </div>
+                  </div>
+                ))}
+                <button className="btn self-start text-xs" disabled={totalLong >= 60} onClick={() => setShots([...shots, { prompt: "", duration_s: Math.min(5, Math.floor((engine?.max_frames ?? 121) / fps)), camera: "" }])}><Plus size={13} /> Add shot</button>
+                {totalLong > 60 && <p className="text-xs text-red-300">The limit is 60 seconds.</p>}
+              </div>
+            </Field>
+          </>
+        )}
         {mode === "v2v" && (
           <Field label="Source video" hint="Restyled with partial denoising: lower strength keeps more of the original">
             <MediaPicker kind="video" value={video} onChange={setVideo} />
           </Field>
         )}
 
-        <Field label={mode === "t2v" ? "Prompt" : mode === "i2v" ? "What happens (optional)" : "New style"}
+        {mode !== "long" && <Field label={mode === "t2v" ? "Prompt" : mode === "i2v" ? "What happens (optional)" : "New style"}
           right={<button className="btn-ghost -mr-2" disabled={!prompt.trim() || enhancing} onClick={enhance}><Wand2 size={13} /> {enhancing ? "Enhancing…" : "Enhance"}</button>}>
           <textarea className="input min-h-[120px] resize-y leading-relaxed" value={prompt} onChange={(e) => setPrompt(e.target.value)}
             placeholder={mode === "t2v" ? "A lone astronaut walks across red dunes at golden hour, dust drifting in the wind…" : mode === "i2v" ? "She turns toward the camera and smiles, hair moving in the breeze" : "Hand-painted anime style, warm sunset palette"} />
           <button className="mt-2 text-xs text-fog-500 hover:text-fog-300" onClick={() => setShowNeg(!showNeg)}>{showNeg ? "− Hide" : "+ Add"} negative prompt</button>
           {showNeg && <textarea className="input mt-2 min-h-[70px] text-xs" value={negative ?? engine?.defaults.negative ?? ""} onChange={(e) => setNegative(e.target.value)} placeholder="What to avoid" />}
-        </Field>
+        </Field>}
 
         {mode === "i2v" && (
           <Field label="Motion">
@@ -246,15 +298,15 @@ export default function CreatePage() {
         </Field>
 
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Duration">
+          {mode !== "long" ? <Field label="Duration">
             <Slider label="" min={1} max={Math.max(1, maxDuration)} step={1} value={duration} onChange={setDuration} display={`${duration}s`} />
-          </Field>
+          </Field> : <div />}
           <Field label="FPS">
             <div className="flex flex-wrap gap-1.5">{engine?.fps_options.map((f) => <button key={f} className={`chip ${fps === f ? "chip-on" : ""}`} onClick={() => setFps(f)}>{f}</button>)}</div>
           </Field>
         </div>
 
-        <CameraPanel moves={meta?.camera_moves ?? []} selected={camera} toggle={toggleCam} intensity={camIntensity} setIntensity={setCamIntensity} />
+        {mode !== "long" && <CameraPanel moves={meta?.camera_moves ?? []} selected={camera} toggle={toggleCam} intensity={camIntensity} setIntensity={setCamIntensity} />}
 
         <div>
           <button className="flex w-full items-center justify-between text-left" onClick={() => setShowAdv(!showAdv)}>
