@@ -105,7 +105,7 @@ async def _backend_status(b: dict[str, Any]) -> dict[str, Any]:
     if not b.get("url"):
         out["error"] = "No address set."
         return out
-    client = ComfyClient(b["url"], b.get("token", ""), timeout=8)
+    client = ComfyClient(b["url"], b.get("token", ""), timeout=20)
     try:
         stats = await client.system_stats()
     except Exception as e:  # noqa: BLE001

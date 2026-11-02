@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import ssl
 import threading
 import time
 import urllib.request
@@ -34,6 +35,16 @@ WEB_DIRECTORY = None
 ALLOWED_FOLDERS = {"diffusion_models", "text_encoders", "vae", "checkpoints", "upscale_models", "loras", "clip_vision"}
 ALLOWED_HOSTS = ("https://huggingface.co/", "https://github.com/")
 _downloads: dict[str, dict] = {}
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """python.org Python on macOS ships without system CA certificates, which makes every HTTPS download fail
+    with CERTIFICATE_VERIFY_FAILED. Use certifi's CA bundle when it's available."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:  # noqa: BLE001
+        return ssl.create_default_context()
 _lock = threading.Lock()
 
 routes = PromptServer.instance.routes
@@ -78,7 +89,7 @@ def _download(key: str, url: str, dest: Path) -> None:
         headers["Authorization"] = f"Bearer {hf_token}"
     try:
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=60) as r, part.open("wb") as fh:
+        with urllib.request.urlopen(req, timeout=60, context=_ssl_context()) as r, part.open("wb") as fh:
             total = int(r.headers.get("Content-Length") or 0)
             with _lock:
                 _downloads[key]["total"] = total

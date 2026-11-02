@@ -31,6 +31,10 @@ export default function ModelsPage() {
   }, [pollDownloads, downloads, reload]);
 
   const install = async (id: string) => {
+    const eng = meta?.engines.find((e) => e.id === id);
+    if (eng && !eng.runs_on_cpu && status?.online && !gpu) {
+      if (!confirm(`${status.name} has no GPU. ${eng.name} would take hours per clip there.\n\nInstall it on your Kaggle GPU backend instead (pick it at the top right). Install here anyway?`)) return;
+    }
     try {
       const r = await api<{ started: string[] }>("/api/models/install", { method: "POST", json: { engine_id: id, backend_id: backendId } });
       toast(r.started.length ? `Downloading ${r.started.length} file(s) on ${status?.name}` : "Already installed");
@@ -96,6 +100,7 @@ export default function ModelsPage() {
 
 function EngineCard({ e, st, online, canManage, downloads, onInstall, onRemove, gpuVram }: { e: EngineInfo; st?: { installed: boolean; missing: string[] }; online: boolean; canManage: boolean; downloads: any[]; onInstall: () => void; onRemove: () => void; gpuVram?: number }) {
   const mine = downloads.filter((d) => e.files.some((f) => d.key === `${f.folder}/${f.filename}`) && d.status !== "done");
+  const busy = mine.some((d) => d.status === "running");
   const tooSmall = gpuVram !== undefined && gpuVram > 0 && gpuVram < e.min_vram_gb;
   return (
     <div className={`panel p-5 ${e.catalog_only ? "opacity-70" : ""}`}>
@@ -129,7 +134,7 @@ function EngineCard({ e, st, online, canManage, downloads, onInstall, onRemove, 
         </div>
       )}
       <div className="mt-5 flex items-center gap-2">
-        {!e.catalog_only && online && canManage && !st?.installed && mine.length === 0 && <button className="btn-primary" onClick={onInstall}><Download size={14} /> Install on this backend</button>}
+        {!e.catalog_only && online && canManage && !st?.installed && !busy && <button className="btn-primary" onClick={onInstall}><Download size={14} /> {mine.length ? "Retry install" : "Install on this backend"}</button>}
         {!e.catalog_only && online && canManage && st?.installed && <button className="btn" onClick={onRemove}><Trash2 size={14} /> Remove</button>}
         <a className="btn-ghost ml-auto" href={e.homepage} target="_blank" rel="noreferrer">Model page <ExternalLink size={12} /></a>
       </div>

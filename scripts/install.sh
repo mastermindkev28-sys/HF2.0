@@ -57,6 +57,8 @@ say "Installing the studio backend"
 [ -d "$APP/backend/.venv" ] || "$PY" -m venv "$APP/backend/.venv"
 "$APP/backend/.venv/bin/python" -m pip install -q --upgrade pip
 "$APP/backend/.venv/bin/python" -m pip install -q -r "$APP/backend/requirements.txt"
+# python.org Python on macOS ships without CA certificates; run its own fix if present
+for f in /Applications/Python\ 3.1*/Install\ Certificates.command; do [ -f "$f" ] && bash "$f" >/dev/null 2>&1 || true; done
 
 # ---------------------------------------------------------------- interface
 # A pre-built copy ships in frontend/out. Rebuild it if Node 18+ is available.
@@ -105,6 +107,7 @@ if [ "$NO_COMFY" = "0" ]; then
   grep -viE "^($SKIP)([<>=~ \[]|\$)" "$COMFY/requirements.txt" > "$RUNTIME/comfy-req.txt"
   [ -f "$APP/scripts/comfy-constraints-$OS-$ARCH.txt" ] && CONS=(-c "$APP/scripts/comfy-constraints-$OS-$ARCH.txt") || CONS=()
   "$VPY" -m pip install -q -r "$RUNTIME/comfy-req.txt" "${CONS[@]}"
+  "$VPY" -m pip install -q certifi   # CA certificates for model downloads (python.org Python on macOS has none)
   # bridge node (model manager + hardware info)
   rm -rf "$COMFY/custom_nodes/higgs_bridge"
   cp -R "$APP/custom_nodes/higgs_bridge" "$COMFY/custom_nodes/higgs_bridge"
