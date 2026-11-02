@@ -23,6 +23,7 @@ KNOWN = {"UNETLoader", "CLIPLoader", "VAELoader", "ModelSamplingSD3", "CLIPTextE
          "EmptyLTXVLatentVideo", "LTXVImgToVideo", "LTXVScheduler", "KSamplerSelect", "SamplerCustom",
          "SplitSigmasDenoise", "UpscaleModelLoader", "ImageUpscaleWithModel"}
 SUBMITTED: list[dict] = []
+UPSCALERS: list[str] = []
 
 
 @app.get("/system_stats")
@@ -37,7 +38,7 @@ async def object_info():
         "CLIPLoader": {"input": {"required": {"clip_name": [["umt5_xxl_fp8_e4m3fn_scaled.safetensors", "t5xxl_fp8_e4m3fn_scaled.safetensors"]]}}},
         "VAELoader": {"input": {"required": {"vae_name": ["COMBO", {"options": ["wan2.2_vae.safetensors"]}]}}},
         "CheckpointLoaderSimple": {"input": {"required": {"ckpt_name": [["ltxv-2b-0.9.8-distilled.safetensors"]]}}},
-        "UpscaleModelLoader": {"input": {"required": {"model_name": [[]]}}},
+        "UpscaleModelLoader": {"input": {"required": {"model_name": [list(UPSCALERS)]}}},
         **{k: {} for k in KNOWN if k not in ("UNETLoader", "CLIPLoader", "VAELoader", "CheckpointLoaderSimple", "UpscaleModelLoader")},
     }
 

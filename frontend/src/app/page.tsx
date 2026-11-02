@@ -42,6 +42,7 @@ export default function CreatePage() {
   const [motionPrompt, setMotionPrompt] = useState("");
   const [motionIntensity, setMotionIntensity] = useState(3);
   const [denoise, setDenoise] = useState(0.6);
+  const [finish1080, setFinish1080] = useState(false);
   const [characterId, setCharacterId] = useState("");
   const [characters, setCharacters] = useState<Character[]>([]);
   const [showAdv, setShowAdv] = useState(false);
@@ -83,6 +84,7 @@ export default function CreatePage() {
         setCamera(p.camera ?? []); setCamIntensity(p.camera_intensity ?? 3); setMotionPrompt(p.motion_prompt ?? "");
         if (p.motion_intensity) setMotionIntensity(p.motion_intensity);
         if (p.denoise) setDenoise(p.denoise);
+        setFinish1080(!!p.finish_1080p);
         setCharacterId(g.character_id ?? "");
         setCurrent(g);
       }, 50);
@@ -137,7 +139,7 @@ export default function CreatePage() {
           duration_s: duration, fps, steps, cfg, seed, camera, camera_intensity: camIntensity,
           motion_prompt: motionPrompt, motion_intensity: mode === "i2v" ? motionIntensity : undefined,
           image: mode === "i2v" ? image?.ref : undefined, video: mode === "v2v" ? video?.ref : undefined,
-          denoise: mode === "v2v" ? denoise : undefined, character_id: characterId || undefined,
+          denoise: mode === "v2v" ? denoise : undefined, character_id: characterId || undefined, finish_1080p: finish1080,
         },
       });
       setCurrent(g);
@@ -232,6 +234,15 @@ export default function CreatePage() {
 
         <Field label="Resolution" hint={engine?.resolutions.find((r) => r.id === resolution)?.note}>
           <div className="flex flex-wrap gap-1.5">{engine?.resolutions.map((r) => <button key={r.id} className={`chip ${resolution === r.id ? "chip-on" : ""}`} onClick={() => setResolution(r.id)}>{r.label}</button>)}</div>
+          <label className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-xl border border-white/[0.07] bg-ink-900 p-3">
+            <input type="checkbox" className="mt-0.5" checked={finish1080} onChange={(e) => setFinish1080(e.target.checked)} />
+            <span>
+              <span className="text-sm text-fog-100">Finish in 1080p</span>
+              <span className="block text-[11px] leading-snug text-fog-500">
+                Generates at the model&apos;s resolution, then AI-upscales (Real-ESRGAN) to {aspect === "9:16" ? "1080×1920" : aspect === "1:1" ? "1080×1080" : aspect === "4:3" ? "1440×1080" : "1920×1080"}. Best from 720p. Needs a GPU backend with the upscaler installed.
+              </span>
+            </span>
+          </label>
         </Field>
 
         <div className="grid grid-cols-2 gap-4">

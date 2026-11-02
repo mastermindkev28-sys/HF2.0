@@ -201,8 +201,27 @@ class JobManager:
         p = g["params"]
         image = resolve_input_path(p["image"]) if g["mode"] == "i2v" else None
         video = resolve_input_path(p["video"]) if g["mode"] == "v2v" else None
+        if p.get("finish_1080p"):  # check before spending GPU time on the generation
+            installed = installed_from_object_info(await client_for(g["backend_id"]).object_info())
+            if not any(n in installed.get("upscale_models", []) for n in [UPSCALER.filename, *UPSCALER.alternatives]):
+                raise ComfyError("“Finish in 1080p” needs the Real-ESRGAN upscaler on this backend. Install it from Explore Models.")
         out = await self._run_engine(g, g["mode"], image, video, g["id"])
+        if p.get("finish_1080p"):
+            out = await self._to_1080p(g, out)
         await self._finish(g["id"], out)
+
+    async def _to_1080p(self, g: dict[str, Any], src: Path) -> Path:
+        """Real-ESRGAN x2 on the backend, then an exact 1080p frame (1920x1080, 1080x1920, ...) with FFmpeg."""
+        cb = self._progress_cb(g["id"])
+        cb(0.975, "Upscaling to 1080p (Real-ESRGAN)")
+        up = OUTPUTS_DIR / f"{g['id']}.x2.mp4"
+        await self._ai_upscale_file(g, src, up, report=False)
+        final = OUTPUTS_DIR / f"{g['id']}.1080p.mp4"
+        await media.fit_1080(up, final, g["params"].get("aspect", "16:9"))
+        up.unlink(missing_ok=True)
+        if src != final:
+            src.unlink(missing_ok=True)
+        return final
 
     async def _extend(self, g: dict[str, Any]) -> None:
         """Real extension: the source clip's last frame seeds an image-to-video continuation, then both are joined."""
@@ -234,27 +253,46 @@ class JobManager:
             await media.concat([resolve_input_path(s) for s in p["sources"]], final, drop_first_frame_of_rest=False)
         await self._finish(g["id"], final)
 
-    async def _upscale_ai(self, g: dict[str, Any]) -> None:
-        p = g["params"]
+    async def _ai_upscale_file(self, g: dict[str, Any], src: Path, dest: Path, report: bool = True) -> Path:
         client = client_for(g["backend_id"])
         cb = self._progress_cb(g["id"])
-        cb(0.0, "Checking upscaler on backend")
+        if report:
+            cb(0.0, "Checking upscaler on backend")
         installed = installed_from_object_info(await client.object_info())
         names = [UPSCALER.filename, *UPSCALER.alternatives]
         model = next((n for n in names if n in installed.get("upscale_models", [])), None)
         if not model:
             raise ComfyError("The Real-ESRGAN upscaler is not installed on this backend. Install it from Explore Models.")
-        src = resolve_input_path(p["source"])
         info = await media.probe(src)
-        name = await client.upload_file(src, f"higgs_{g['id']}{src.suffix}")
+        name = await client.upload_file(src, f"higgs_{g['id']}_up{src.suffix}")
         wf = upscale_workflow(name, model, info.get("fps") or 24)
-        result = await client.run(wf, cb, self.cancels.get(g["id"]))
+        result = await client.run(wf, cb if report else (lambda *_: None), self.cancels.get(g["id"]))
         out = pick_output(result)
         if not out:
             raise ComfyError("The upscaler returned no file.")
+        await client.download(out["filename"], out.get("subfolder", ""), out.get("type", "output"), dest)
+        return dest
+
+    async def _upscale_ai(self, g: dict[str, Any]) -> None:
+        p = g["params"]
+        src = resolve_input_path(p["source"])
         final = OUTPUTS_DIR / f"{g['id']}.mp4"
-        await client.download(out["filename"], out.get("subfolder", ""), out.get("type", "output"), final)
+        if p.get("target") == "1080p":
+            up = OUTPUTS_DIR / f"{g['id']}.x2.mp4"
+            await self._ai_upscale_file(g, src, up)
+            self._progress_cb(g["id"])(0.98, "Fitting to 1080p")
+            info = await media.probe(src)
+            w, h = info.get("width") or 16, info.get("height") or 9
+            await media.fit_1080(up, final, aspect_from_size(w, h))
+            up.unlink(missing_ok=True)
+        else:
+            await self._ai_upscale_file(g, src, final)
         await self._finish(g["id"], final)
+
+
+def aspect_from_size(w: int, h: int) -> str:
+    r = w / h
+    return min({"16:9": 16 / 9, "9:16": 9 / 16, "1:1": 1.0, "4:3": 4 / 3, "3:4": 3 / 4}.items(), key=lambda kv: abs(kv[1] - r))[0]
 
 
 def _humanize(e: Exception) -> str:
@@ -273,7 +311,7 @@ def _humanize(e: Exception) -> str:
 
 
 def delete_generation_files(g: dict[str, Any]) -> None:
-    for name in (g.get("output_file"), f"{g['id']}.workflow.json", f"{g['id']}.cont.mp4", f"{g['id']}.cont.workflow.json"):
+    for name in (g.get("output_file"), f"{g['id']}.workflow.json", f"{g['id']}.mp4", f"{g['id']}.1080p.mp4", f"{g['id']}.cont.mp4", f"{g['id']}.cont.workflow.json"):
         if name:
             (OUTPUTS_DIR / name).unlink(missing_ok=True)
     if g.get("thumb_file"):

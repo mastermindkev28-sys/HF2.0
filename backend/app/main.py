@@ -253,6 +253,7 @@ class GenerateIn(BaseModel):
     character_id: str | None = None
     extra: dict[str, Any] = {}
     parent_id: str | None = None
+    finish_1080p: bool = False
 
 
 def _create_job(body: GenerateIn) -> dict[str, Any]:
@@ -287,6 +288,7 @@ def _create_job(body: GenerateIn) -> dict[str, Any]:
         "camera_intensity": body.camera_intensity, "motion_prompt": body.motion_prompt,
         "motion_intensity": body.motion_intensity, "image": image, "video": body.video,
         "denoise": body.denoise if body.denoise is not None else d.get("denoise"), "extra": body.extra,
+        "finish_1080p": body.finish_1080p,
     }
     w, h = engine.dims(params["aspect"], params["resolution"])
     params["width"], params["height"] = w, h
@@ -373,7 +375,7 @@ async def regenerate(gid: str, body: RegenIn):
                      camera_intensity=p.get("camera_intensity", 3), motion_prompt=p.get("motion_prompt", ""),
                      motion_intensity=p.get("motion_intensity"), image=p.get("image"), video=p.get("video"),
                      denoise=p.get("denoise"), character_id=g.get("character_id"), extra=p.get("extra", {}),
-                     parent_id=gid)
+                     parent_id=gid, finish_1080p=bool(p.get("finish_1080p")))
     new = _create_job(req)
     await jobs.enqueue(new["id"])
     return new
@@ -414,6 +416,7 @@ class ToolIn(BaseModel):
     sources: list[str] = []
     target_fps: int = 48
     factor: int = 2
+    target: str | None = None
 
 
 @app.post("/api/tools/{tool}")
@@ -427,7 +430,7 @@ async def run_tool(tool: str, body: ToolIn):
     if tool != "upscale_ai" and not media.ffmpeg_bin():
         raise HTTPException(400, "FFmpeg is not installed. Run scripts/install.sh.")
     label = {"interpolate": f"Frame interpolation to {body.target_fps} fps", "upscale_basic": f"Upscale x{body.factor} (Lanczos)",
-             "upscale_ai": "AI upscale (Real-ESRGAN)", "stitch": f"Stitched {len(body.sources)} clips"}[tool]
+             "upscale_ai": "AI upscale to 1080p (Real-ESRGAN)" if body.target == "1080p" else "AI upscale x2 (Real-ESRGAN)", "stitch": f"Stitched {len(body.sources)} clips"}[tool]
     parent = (body.source or (body.sources[0] if body.sources else "")).partition(":")[2] or None
     g = db.create_generation(mode=tool, engine="realesrgan" if tool == "upscale_ai" else "ffmpeg",
                              backend_id=load_settings()["active_backend"], prompt=label, final_prompt=label,

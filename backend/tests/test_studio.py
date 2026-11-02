@@ -135,6 +135,18 @@ def test_full_pipeline(fake_comfy):
         up = _wait(c, c.post("/api/tools/upscale_ai", json={"source": f"generation:{g['id']}"}).json()["id"])
         assert up["status"] == "error" and "not installed" in up["error"]
 
+        # 1080p finishing: refused up front without the upscaler, works with it
+        bad = _wait(c, c.post("/api/generate", json={"mode": "t2v", "engine": "wan22_ti2v_5b", "prompt": "x", "aspect": "9:16", "finish_1080p": True}).json()["id"])
+        assert bad["status"] == "error" and "upscaler" in bad["error"]
+        fc.UPSCALERS.append("RealESRGAN_x2.pth")
+        hd = _wait(c, c.post("/api/generate", json={"mode": "t2v", "engine": "wan22_ti2v_5b", "prompt": "x", "aspect": "9:16", "finish_1080p": True}).json()["id"])
+        assert hd["status"] == "done", hd
+        out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0",
+                              str(Path(os.environ["HIGGS_DATA_DIR"]) / "outputs" / hd["output_file"])], capture_output=True, text=True).stdout.strip()
+        assert out == "1080,1920", out
+        up = _wait(c, c.post("/api/tools/upscale_ai", json={"source": f"generation:{g['id']}", "target": "1080p"}).json()["id"])
+        assert up["status"] == "done", up
+
         # characters
         ch = c.post("/api/characters/from-generation", json={"generation_id": g["id"], "name": "Fox"}).json()
         assert ch["images"]

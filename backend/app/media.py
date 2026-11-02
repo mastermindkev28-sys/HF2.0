@@ -155,6 +155,19 @@ async def upscale_basic(video: Path, dest: Path, factor: int = 2) -> Path:
     return dest
 
 
+SIZES_1080 = {"16:9": (1920, 1080), "9:16": (1080, 1920), "1:1": (1080, 1080), "4:3": (1440, 1080), "3:4": (1080, 1440)}
+
+
+async def fit_1080(src: Path, dest: Path, aspect: str) -> Path:
+    """Scales (and center-crops the few leftover pixels) to an exact 1080p frame for the aspect ratio."""
+    ff = _need_ffmpeg()
+    w, h = SIZES_1080.get(aspect, (1920, 1080))
+    await _run(ff, "-y", "-v", "error", "-i", str(src), "-vf",
+               f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,crop={w}:{h},setsar=1",
+               "-c:v", "libx264", "-crf", "16", "-preset", "slow", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(dest))
+    return dest
+
+
 async def to_mp4(src: Path, dest: Path) -> Path:
     """Normalizes any output (webp/webm/mov) to a widely playable H.264 MP4."""
     ff = _need_ffmpeg()

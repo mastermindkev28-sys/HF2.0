@@ -93,6 +93,7 @@ function ToolsMenu({ gen, onNew, act, busy }: { gen: Generation; onNew: (g: Gene
       <button className="btn-ghost" disabled={busy} onClick={() => setOpen(!open)}><Sparkles size={13} /> Enhance</button>
       {open && (
         <div className="absolute right-0 z-20 mt-1 w-64 rounded-xl border border-white/10 bg-ink-800 p-1 text-xs shadow-2xl">
+          <MenuItem title="AI upscale to 1080p" sub="Real-ESRGAN on the backend, exact 1080p frame" onClick={() => run("upscale_ai", { target: "1080p" }, "1080p upscale queued")} />
           <MenuItem title="AI upscale ×2" sub="Real-ESRGAN on the backend" onClick={() => run("upscale_ai", {}, "AI upscale queued")} />
           <MenuItem title="Quick upscale ×2" sub="FFmpeg Lanczos, on this computer" onClick={() => run("upscale_basic", { factor: 2 }, "Upscale queued")} />
           <MenuItem title="Smooth to 48 fps" sub="FFmpeg motion interpolation (not AI)" icon={<Gauge size={12} />} onClick={() => run("interpolate", { target_fps: 48 }, "Interpolation queued")} />

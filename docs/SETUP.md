@@ -94,6 +94,10 @@ Hugging Face directly onto that backend; **Remove** deletes them. Status shows R
 - **Video to Video** re-renders your clip through the model with partial denoising ("strength").
   Lower strength keeps more of the original composition.
 - **Extend** takes the last frame, generates an image-to-video continuation, and joins the two clips.
+- **Finish in 1080p** (Create page) and **Enhance → AI upscale to 1080p**: the model generates at its
+  native resolution (Wan 2.2: 720p), then Real-ESRGAN ×2 on the backend upscales it and FFmpeg fits it to
+  an exact 1920×1080 / 1080×1920 / 1080×1080 / 1440×1080 frame. No free model that fits a 16 GB GPU generates
+  native 1080p at a usable speed. Use a GPU backend; on a CPU this step is very slow.
 - **Enhance → AI upscale** runs Real-ESRGAN on the backend. **Quick upscale** and **Smooth to 48 fps**
   run FFmpeg on your computer (classical, not AI).
 - **Stitch:** select clips in My Generations and join them in order.
