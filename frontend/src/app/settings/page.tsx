@@ -58,6 +58,9 @@ export default function SettingsPage() {
                     <input className="input font-mono text-xs" type="password" placeholder="Access token (if any)" value={b.token} onChange={(e) => setBackend(i, { token: e.target.value })} />
                     <button className="btn" onClick={() => test(b)} disabled={!b.url}><PlugZap size={14} /> Test</button>
                   </div>
+                  {b.id !== "local" && /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(b.url) && (
+                    <p className="mt-2 text-xs text-amber-300/90">This is your own computer&apos;s address, not {b.name}. Paste the public address the notebook prints (https://….trycloudflare.com).</p>
+                  )}
                   {t === "testing" && <p className="mt-2 text-xs text-fog-500">Connecting…</p>}
                   {t && t !== "testing" && (t.online ? (
                     <p className="mt-2 flex items-center gap-1.5 text-xs text-accent"><Check size={13} /> Connected · {t.bridge?.gpu?.name ?? t.devices?.[0]?.name ?? "CPU"}{t.bridge ? "" : " · bridge node missing"}{t.engines ? ` · ${Object.values(t.engines).filter((e) => e.installed).length} model(s) installed` : ""}</p>
